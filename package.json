@@ -6,10 +6,10 @@
   "author": "Antigravity",
   "license": "MIT",
   "type": "module",
-  "homepage": "https://github.com/YOUR_USERNAME/TimeTracker",
+  "homepage": "https://github.com/Dhruvipatel2004/SentinelTrack",
   "repository": {
     "type": "git",
-    "url": "https://github.com/YOUR_USERNAME/TimeTracker.git"
+    "url": "https://github.com/Dhruvipatel2004/SentinelTrack.git"
   },
   "scripts": {
     "dev": "electron-vite dev",
@@ -75,7 +75,7 @@
       ],
       "icon": "resources/icon.png",
       "artifactName": "${productName}-Setup-${version}.${ext}",
-      "publisherName": "TimeTracker Team"
+      "signAndEditExecutable": false
     },
     "nsis": {
       "oneClick": false,
@@ -83,19 +83,15 @@
       "allowElevation": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "TimeTracker",
-      "installerIcon": "resources/icon.png",
-      "uninstallerIcon": "resources/icon.png",
-      "installerHeader": "resources/icon.png",
-      "installerHeaderIcon": "resources/icon.png"
+      "shortcutName": "TimeTracker"
     },
     "portable": {
       "artifactName": "${productName}-${version}-portable.${ext}"
     },
     "publish": {
       "provider": "github",
-      "owner": "YOUR_USERNAME",
-      "repo": "TimeTracker",
+      "owner": "Dhruvipatel2004",
+      "repo": "SentinelTrack",
       "releaseType": "release"
     }
   }
