@@ -29,12 +29,61 @@ process.on('unhandledRejection', (reason) => {
     logError(reason);
 });
 
+let mainWindow: BrowserWindow | null = null;
+let screenshotPopup: BrowserWindow | null = null;
+let currentUserId: string | null = null;
+let currentAccessToken: string | null = null;
+
+function createScreenshotPopup(data: any): void {
+    if (screenshotPopup && !screenshotPopup.isDestroyed()) {
+        screenshotPopup.close();
+    }
+
+    const preloadPath = join(__dirname, '../preload/index.mjs');
+
+    screenshotPopup = new BrowserWindow({
+        width: 420,
+        height: 560,
+        frame: false,
+        alwaysOnTop: true,
+        show: false,
+        backgroundColor: '#0f172a', // Slate-900
+        webPreferences: {
+            preload: preloadPath,
+            sandbox: false,
+            contextIsolation: true,
+            nodeIntegration: false
+        }
+    });
+
+    const popupUrl = is.dev && process.env['ELECTRON_RENDERER_URL']
+        ? `${process.env['ELECTRON_RENDERER_URL']}#screenshot-popup`
+        : `${join(__dirname, '../renderer/index.html')}#screenshot-popup`;
+
+    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+        screenshotPopup.loadURL(popupUrl);
+    } else {
+        screenshotPopup.loadFile(join(__dirname, '../renderer/index.html'), { hash: 'screenshot-popup' });
+    }
+
+    screenshotPopup.once('ready-to-show', () => {
+        if (screenshotPopup) {
+            screenshotPopup.show();
+            screenshotPopup.webContents.send('screenshot-data', data);
+        }
+    });
+
+    screenshotPopup.on('closed', () => {
+        screenshotPopup = null;
+    });
+}
+
 function createWindow(): void {
     const preloadPath = join(__dirname, '../preload/index.mjs')
     console.log('Main Process: Looking for preload at', preloadPath);
 
     // Create the browser window.
-    const mainWindow = new BrowserWindow({
+    mainWindow = new BrowserWindow({
         width: 900,
         height: 670,
         show: false,
@@ -49,8 +98,8 @@ function createWindow(): void {
     })
 
     mainWindow.on('ready-to-show', () => {
-        mainWindow.show()
-        initTray(mainWindow)
+        mainWindow?.show()
+        if (mainWindow) initTray(mainWindow)
     })
 
     mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -63,9 +112,17 @@ function createWindow(): void {
         console.log('Main: Screenshot triggered');
         try {
             const image = await screenshotService.captureScreen();
-            if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('screenshot-captured', { image, metadata });
-            }
+            const aiDescription = await screenshotService.generateAIDescription(image);
+
+            createScreenshotPopup({
+                image,
+                aiDescription,
+                metadata: {
+                    ...metadata,
+                    userId: metadata.userId || currentUserId,
+                    token: metadata.token || currentAccessToken
+                }
+            });
         } catch (e) {
             console.error('Capture failed', e);
         }
@@ -75,6 +132,9 @@ function createWindow(): void {
     // Clean up listener when window closes
     mainWindow.on('closed', () => {
         activityTracker.off('trigger-screenshot', onTriggerScreenshot);
+        if (screenshotPopup && !screenshotPopup.isDestroyed()) {
+            screenshotPopup.close();
+        }
     });
 
     // HMR for renderer base on electron-vite cli.
@@ -89,7 +149,7 @@ function createWindow(): void {
     mainWindow.on('close', (event) => {
         if (!(app as any).isQuitting) {
             event.preventDefault()
-            mainWindow.hide()
+            mainWindow?.hide()
         }
         return false
     })
@@ -161,6 +221,7 @@ app.whenReady().then(() => {
     ipcMain.handle('set-user-id', (_, userId: string) => {
         try {
             console.log('IPC: set-user-id', userId);
+            currentUserId = userId;
             activityTracker.setUserId(userId);
             return true;
         } catch (error) {
@@ -172,6 +233,7 @@ app.whenReady().then(() => {
     ipcMain.handle('set-supabase-session', async (_, accessToken: string) => {
         try {
             console.log('IPC: set-supabase-session');
+            currentAccessToken = accessToken;
             await syncService.setSession(accessToken);
             return true;
         } catch (error) {
@@ -182,7 +244,7 @@ app.whenReady().then(() => {
 
     ipcMain.handle('save-screenshot', async (_, { userId, dataUrl, description, metadata, token }) => {
         console.log('IPC: save-screenshot for', userId);
-        return await screenshotService.uploadScreenshot(
+        const success = await screenshotService.uploadScreenshot(
             userId,
             dataUrl,
             description,
@@ -192,6 +254,18 @@ app.whenReady().then(() => {
             token,
             metadata.sessionId
         );
+
+        if (success && screenshotPopup && !screenshotPopup.isDestroyed()) {
+            screenshotPopup.close();
+        }
+
+        return success;
+    });
+
+    ipcMain.handle('close-screenshot-popup', () => {
+        if (screenshotPopup && !screenshotPopup.isDestroyed()) {
+            screenshotPopup.close();
+        }
     });
 
     createWindow()

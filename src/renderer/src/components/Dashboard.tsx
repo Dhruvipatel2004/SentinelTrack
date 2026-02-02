@@ -3,12 +3,11 @@ import { useAuth } from '@clerk/clerk-react'
 // @ts-ignore
 import { Activity, MousePointer, Keyboard, Power, Pause, Play, RotateCcw, ChevronDown, ChevronUp, History, Briefcase, Target, ListTodo, FileText } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { ScreenshotApproval } from './ScreenshotApproval'
 
 const getEaosUserId = async (clerkUserId: string) => {
     const { data, error } = await supabase
         .from('users')
-        .select('id, full_name') // Changed from 'name' to 'full_name'
+        .select('id, full_name') 
         .eq('clerk_user_id', clerkUserId)
         .single()
 
@@ -266,71 +265,8 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
         return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
     }
 
-    const [pendingScreenshot, setPendingScreenshot] = useState<{ image: string, metadata: any } | null>(null)
-
-
-    useEffect(() => {
-        const electron = (window as any).electron
-        if (!electron?.ipcRenderer) return
-
-        const handleScreenshot = (data: any) => {
-            console.log('Received screenshot event', data)
-            setPendingScreenshot(data)
-        }
-
-        electron.ipcRenderer.on('screenshot-captured', handleScreenshot)
-        return () => {
-            electron.ipcRenderer.off('screenshot-captured', handleScreenshot)
-        }
-    }, [])
-
-    const handleScreenshotSubmit = async (description: string) => {
-        if (!pendingScreenshot) return;
-
-        try {
-            const token = await getToken({ template: 'supabase' });
-            if (!token) {
-                alert('Authentication error: Unable to get token');
-                return;
-            }
-
-            const electron = (window as any).electron;
-            const success = await electron.ipcRenderer.invoke('save-screenshot', {
-                userId: user.id,
-                dataUrl: pendingScreenshot.image,
-                description,
-                metadata: pendingScreenshot.metadata,
-                token
-            });
-
-            if (success) {
-                // Determine if we should show a success message or just close
-                // alert('Screenshot saved!'); // Maybe too intrusive?
-            } else {
-                alert('Failed to save screenshot.');
-            }
-        } catch (error) {
-            console.error('Screenshot save failed:', error);
-            alert('Error saving screenshot.');
-        } finally {
-            setPendingScreenshot(null);
-        }
-    };
-
-    const handleScreenshotCancel = () => {
-        setPendingScreenshot(null);
-    };
-
     return (
         <div className="flex flex-col h-screen bg-slate-900 text-white p-6 overflow-hidden relative">
-            {pendingScreenshot && (
-                <ScreenshotApproval
-                    imageUrl={pendingScreenshot.image}
-                    metadata={pendingScreenshot.metadata}
-                    onSubmit={handleScreenshotSubmit}
-                    onCancel={handleScreenshotCancel}
-                />
-            )}
             <div className="flex justify-between items-center mb-6 shrink-0">
                 <div>
                     <h1 className="text-2xl font-bold flex items-center gap-2">

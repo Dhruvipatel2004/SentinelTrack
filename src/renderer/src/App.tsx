@@ -1,9 +1,24 @@
 import { useState, useEffect, useRef } from 'react'
 import { SignedIn, SignedOut, SignIn, useAuth, useUser } from '@clerk/clerk-react'
 import Dashboard from './components/Dashboard'
+import ScreenshotPopup from './components/ScreenshotPopup'
 import { supabase } from './lib/supabase'
 
 function App(): JSX.Element {
+  const [isPopup, setIsPopup] = useState(window.location.hash === '#screenshot-popup')
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      setIsPopup(window.location.hash === '#screenshot-popup')
+    }
+    window.addEventListener('hashchange', handleHashChange)
+    return () => window.removeEventListener('hashchange', handleHashChange)
+  }, [])
+
+  if (isPopup) {
+    return <ScreenshotPopup />
+  }
+
   return (
     <>
       <SignedIn>

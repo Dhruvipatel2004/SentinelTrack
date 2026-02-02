@@ -1,7 +1,16 @@
 import { desktopCapturer, net } from 'electron'
 import { supabase } from './supabase'
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export class ScreenshotService {
+    private genAI: GoogleGenerativeAI | null = null;
+
+    constructor() {
+        const apiKey = import.meta.env.MAIN_VITE_GOOGLE_GEMINI_API_KEY || process.env.MAIN_VITE_GOOGLE_GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY;
+        if (apiKey) {
+            this.genAI = new GoogleGenerativeAI(apiKey);
+        }
+    }
 
     // Captures the primary screen
     public async captureScreen(): Promise<string> {
@@ -24,6 +33,54 @@ export class ScreenshotService {
         }
     }
 
+   public async generateAIDescription(dataUrl: string): Promise<string> {
+    try {
+        if (!this.genAI) {
+            const apiKey = import.meta.env.MAIN_VITE_GOOGLE_GEMINI_API_KEY || 
+                           process.env.MAIN_VITE_GOOGLE_GEMINI_API_KEY || 
+                           process.env.GOOGLE_GEMINI_API_KEY;
+
+            if (!apiKey) {
+                console.warn('Gemini API Key missing, returning default description');
+                return 'Working on tasks';
+            }
+            this.genAI = new GoogleGenerativeAI(apiKey);
+        }
+
+        const model = this.genAI.getGenerativeModel({ 
+            model: "gemini-2.5-flash" 
+        });
+
+        // Ensure we only have the base64 string
+        const base64Data = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
+
+        const result = await model.generateContent([
+            {
+                inlineData: {
+                    data: base64Data,
+                    mimeType: "image/png"
+                }
+            },
+            "Analyze this screenshot and provide a very short, one-line description (short phrase) of what the user is doing. Example: 'Coding in VS Code'. Keep it under 10 words."
+        ]);
+
+        const response = await result.response;
+        const text = response.text().trim();
+        
+        return text || 'Working on tasks';
+    } catch (error: any) {
+        // Log the specific error to help with further debugging
+        console.error('AI Analysis failed:', error.message || error);
+        
+        // Handle 404 specifically in logs if it persists
+        if (error.status === 404) {
+            console.error('Check if "Generative Language API" is enabled in Google Cloud Console for project: gen-lang-client-0665339235');
+        }
+        
+        return 'Working on tasks';
+    }
+}
+
     public async uploadScreenshot(
         userId: string,
         dataUrl: string,
@@ -34,6 +91,7 @@ export class ScreenshotService {
         accessToken?: string,
         sessionId?: string
     ): Promise<boolean> {
+        // ... existing code ...
         try {
             console.log('Uploading screenshot for user:', userId);
 
@@ -75,7 +133,7 @@ export class ScreenshotService {
             const { data: signedData, error: signedError } = await supabase
                 .storage
                 .from('screenshots')
-                .createSignedUrl(filename, 365 * 24 * 60 * 60); 
+                .createSignedUrl(filename, 365 * 24 * 60 * 60);
             if (signedError) {
                 console.error('Error creating signed URL:', signedError);
                 throw signedError;
