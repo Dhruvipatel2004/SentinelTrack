@@ -6,11 +6,21 @@
   "author": "Antigravity",
   "license": "MIT",
   "type": "module",
+  "homepage": "https://github.com/YOUR_USERNAME/TimeTracker",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YOUR_USERNAME/TimeTracker.git"
+  },
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:win": "npm run build && electron-builder --win --x64",
+    "build:all": "npm run build && electron-builder -mwl",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder",
+    "publish": "npm run build && electron-builder --win --publish always"
   },
   "dependencies": {
     "@clerk/clerk-react": "^4.32.5",
@@ -33,10 +43,60 @@
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.16",
     "electron": "^28.1.0",
+    "electron-builder": "^26.7.0",
     "electron-vite": "^2.0.0",
     "postcss": "^8.4.32",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.3.3",
     "vite": "^5.0.10"
+  },
+  "build": {
+    "appId": "com.timetracker.sentinel",
+    "productName": "TimeTracker",
+    "directories": {
+      "output": "dist",
+      "buildResources": "resources"
+    },
+    "files": [
+      "out/**/*",
+      "resources/**/*",
+      "!**/*.map"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "resources/icon.png",
+      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "publisherName": "TimeTracker Team"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "TimeTracker",
+      "installerIcon": "resources/icon.png",
+      "uninstallerIcon": "resources/icon.png",
+      "installerHeader": "resources/icon.png",
+      "installerHeaderIcon": "resources/icon.png"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "YOUR_USERNAME",
+      "repo": "TimeTracker",
+      "releaseType": "release"
+    }
   }
 }

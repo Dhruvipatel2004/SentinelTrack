@@ -8,6 +8,8 @@ import { syncService } from './sync-service'
 import { screenshotService } from './screenshot-service'
 import { writeFileSync } from 'fs'
 import { join as joinPath } from 'path'
+import { autoUpdater } from 'electron-updater'
+
 
 // Crash logging
 const crashLogPath = joinPath(app.getPath('userData'), 'crash.log');
@@ -161,6 +163,35 @@ function createWindow(): void {
 app.whenReady().then(() => {
     // Set app user model id for windows
     electronApp.setAppUserModelId('com.sentineltrack')
+
+    // Configure Auto-Updater
+    if (!is.dev) {
+        // Only check for updates in production
+        autoUpdater.logger = console
+        autoUpdater.checkForUpdatesAndNotify()
+
+        // Check for updates every 4 hours
+        setInterval(() => {
+            autoUpdater.checkForUpdatesAndNotify()
+        }, 4 * 60 * 60 * 1000)
+
+        // Auto-updater event handlers
+        autoUpdater.on('update-available', () => {
+            console.log('Update available')
+        })
+
+        autoUpdater.on('update-downloaded', () => {
+            console.log('Update downloaded')
+            // Optionally notify the user through the renderer
+            if (mainWindow) {
+                mainWindow.webContents.send('update-ready')
+            }
+        })
+
+        autoUpdater.on('error', (err) => {
+            console.error('Auto-updater error:', err)
+        })
+    }
 
     // Default open or close DevTools by F12 in development
     // and ignore CommandOrControl + R in production.
