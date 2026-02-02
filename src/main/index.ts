@@ -8,7 +8,7 @@ import { syncService } from './sync-service'
 import { screenshotService } from './screenshot-service'
 import { writeFileSync } from 'fs'
 import { join as joinPath } from 'path'
-import { autoUpdater } from 'electron-updater'
+const { autoUpdater } = require('electron-updater')
 
 
 // Crash logging
@@ -188,7 +188,7 @@ app.whenReady().then(() => {
             }
         })
 
-        autoUpdater.on('error', (err) => {
+        autoUpdater.on('error', (err: Error) => {
             console.error('Auto-updater error:', err)
         })
     }
