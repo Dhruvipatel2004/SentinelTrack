@@ -104,6 +104,10 @@ function createWindow(): void {
         }
     })
 
+    if (is.dev) {
+        mainWindow.webContents.openDevTools()
+    }
+
     mainWindow.on('ready-to-show', () => {
         mainWindow?.show()
         if (mainWindow) initTray(mainWindow)
@@ -147,9 +151,16 @@ function createWindow(): void {
     // HMR for renderer base on electron-vite cli.
     // Load the remote URL for development or the local html file for production.
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-        mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+        console.log('Main Process: Loading URL', process.env['ELECTRON_RENDERER_URL']);
+        mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL']).catch(err => {
+            console.error('Failed to load URL:', err);
+        });
     } else {
-        mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+        const indexPath = join(__dirname, '../renderer/index.html');
+        console.log('Main Process: Loading file', indexPath);
+        mainWindow.loadFile(indexPath).catch(err => {
+            console.error('Failed to load file:', err);
+        });
     }
 
     // Prevent closing, hide instead
@@ -169,14 +180,19 @@ app.whenReady().then(() => {
     // Set app user model id for windows
     electronApp.setAppUserModelId('com.sentineltrack')
 
-    // Fix Clerk origin issues in production
-    session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
-        if (details.url.includes('clerk.accounts.dev')) {
-            details.requestHeaders['Origin'] = 'http://localhost';
-            details.requestHeaders['Referer'] = 'http://localhost/';
-        }
-        callback({ requestHeaders: details.requestHeaders });
-    });
+    // Fix Clerk origin and security issues in production
+    if (!is.dev) {
+        session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+            const url = details.url.toLowerCase();
+            if (url.includes('clerk.accounts.dev') || url.includes('clerk.com')) {
+                details.requestHeaders['Origin'] = 'http://localhost';
+                details.requestHeaders['Referer'] = 'http://localhost/';
+                // Spoof a standard browser User-Agent to prevent 400 Bad Request
+                details.requestHeaders['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+            }
+            callback({ requestHeaders: details.requestHeaders });
+        });
+    }
 
     // Configure Auto-Updater
     if (!is.dev) {

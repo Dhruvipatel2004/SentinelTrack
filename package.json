@@ -16,6 +16,7 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit",
+    "clean": "taskkill /F /IM electron.exe /T >nul 2>&1 & taskkill /F /IM TimeTracker.exe /T >nul 2>&1 & if exist out (rd /s /q out) & if exist dist (rd /s /q dist)",
     "build:win": "npm run build && electron-builder --win --x64",
     "build:all": "npm run build && electron-builder -mwl",
     "pack": "npm run build && electron-builder --dir",

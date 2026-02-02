@@ -61,6 +61,13 @@ try {
                 <div>
                     <h1 style="color: #f87171;">Bootstrap Error</h1>
                     <p>${err.message || 'Unknown error during React initialization'}</p>
+                    <p style="margin-top: 20px;">
+                        <a href="https://github.com/Dhruvipatel2004/SentinelTrack/issues" 
+                           style="color: #60a5fa; text-decoration: underline;" 
+                           target="_blank" rel="noopener noreferrer">
+                           Report this issue on GitHub
+                        </a>
+                    </p>
                 </div>
             </div>
         `;
