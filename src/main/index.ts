@@ -182,16 +182,64 @@ app.whenReady().then(() => {
 
     // Fix Clerk origin and security issues in production
     if (!is.dev) {
-        session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
-            const url = details.url.toLowerCase();
-            if (url.includes('clerk.accounts.dev') || url.includes('clerk.com')) {
-                details.requestHeaders['Origin'] = 'http://localhost';
-                details.requestHeaders['Referer'] = 'http://localhost/';
-                // Spoof a standard browser User-Agent to prevent 400 Bad Request
-                details.requestHeaders['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+        const clerkFilters = {
+            urls: [
+                '*://*.clerk.accounts.dev/*',
+                '*://clerk.com/*',
+                '*://*.clerk.com/*'
+            ]
+        };
+
+        // Track origins by request ID to echo them in responses for CORS
+        const requestOrigins = new Map<number, string>();
+
+        // 1. Fix Outgoing Headers (Spoof Origin/Referer only when needed)
+        session.defaultSession.webRequest.onBeforeSendHeaders(clerkFilters, (details, callback) => {
+            const { requestHeaders, id } = details;
+
+            let origin = requestHeaders['Origin'] || requestHeaders['origin'];
+
+            // If the request is coming from our Electron app (file://) or missing an origin,
+            // provider a standard one. If it's already a valid domain (e.g. from Clerk's pages), leave it!
+            if (!origin || origin.startsWith('file://')) {
+                origin = 'http://localhost';
+                requestHeaders['Origin'] = origin;
+                requestHeaders['Referer'] = 'http://localhost/';
             }
-            callback({ requestHeaders: details.requestHeaders });
+
+            // Store the final origin for this request ID so we can echo it in the response
+            requestOrigins.set(id, origin);
+
+            // Spoof a standard browser User-Agent to prevent 400/403 errors
+            requestHeaders['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+            callback({ requestHeaders });
         });
+
+        // 2. Fix Incoming Headers (Echo Origin to bypass CORS)
+        session.defaultSession.webRequest.onHeadersReceived(clerkFilters, (details, callback) => {
+            const { responseHeaders, id } = details;
+
+            if (responseHeaders) {
+                const origin = requestOrigins.get(id) || 'http://localhost';
+
+                // MIRROR the origin. 'Allow-Origin' cannot be '*' when credentials are included.
+                responseHeaders['access-control-allow-origin'] = [origin];
+                responseHeaders['access-control-allow-methods'] = ['GET, POST, OPTIONS, PUT, DELETE, PATCH'];
+                responseHeaders['access-control-allow-headers'] = ['Content-Type, Authorization, X-Requested-With, Clerk-API-Version, Clerk-JS-Version'];
+                responseHeaders['access-control-allow-credentials'] = ['true'];
+
+                // Also ensure we don't have multiple allow-origin headers
+                delete responseHeaders['Access-Control-Allow-Origin'];
+            }
+
+            callback({ responseHeaders });
+        });
+
+        // Cleanup
+        const cleanup = (details: { id: number }) => requestOrigins.delete(details.id);
+        session.defaultSession.webRequest.onCompleted(clerkFilters, cleanup);
+        session.defaultSession.webRequest.onErrorOccurred(clerkFilters, cleanup);
     }
 
     // Configure Auto-Updater
