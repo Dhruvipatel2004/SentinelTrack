@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, session } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -8,7 +8,10 @@ import { syncService } from './sync-service'
 import { screenshotService } from './screenshot-service'
 import { writeFileSync } from 'fs'
 import { join as joinPath } from 'path'
-const { autoUpdater } = require('electron-updater')
+
+// Fix electron-updater import for ESM
+import updater from 'electron-updater'
+const autoUpdater = (updater as any).autoUpdater || (updater as any).default?.autoUpdater || updater.autoUpdater
 
 
 // Crash logging
@@ -54,7 +57,8 @@ function createScreenshotPopup(data: any): void {
             preload: preloadPath,
             sandbox: false,
             contextIsolation: true,
-            nodeIntegration: false
+            nodeIntegration: false,
+            devTools: true
         }
     });
 
@@ -95,7 +99,8 @@ function createWindow(): void {
             preload: preloadPath,
             sandbox: false,
             contextIsolation: true,
-            nodeIntegration: false
+            nodeIntegration: false,
+            devTools: true
         }
     })
 
@@ -164,6 +169,15 @@ app.whenReady().then(() => {
     // Set app user model id for windows
     electronApp.setAppUserModelId('com.sentineltrack')
 
+    // Fix Clerk origin issues in production
+    session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+        if (details.url.includes('clerk.accounts.dev')) {
+            details.requestHeaders['Origin'] = 'http://localhost';
+            details.requestHeaders['Referer'] = 'http://localhost/';
+        }
+        callback({ requestHeaders: details.requestHeaders });
+    });
+
     // Configure Auto-Updater
     if (!is.dev) {
         // Only check for updates in production
@@ -198,6 +212,10 @@ app.whenReady().then(() => {
     // see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
     app.on('browser-window-created', (_, window) => {
         optimizer.watchWindowShortcuts(window)
+        // Auto-open DevTools in production for debugging
+        if (!is.dev) {
+            window.webContents.openDevTools({ mode: 'undocked' })
+        }
     })
 
     // IPC Handlers
