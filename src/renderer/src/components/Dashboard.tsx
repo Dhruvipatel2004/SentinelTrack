@@ -7,7 +7,7 @@ import { supabase } from '../lib/supabase'
 const getEaosUserId = async (clerkUserId: string) => {
     const { data, error } = await supabase
         .from('users')
-        .select('id, full_name') 
+        .select('id, full_name')
         .eq('clerk_user_id', clerkUserId)
         .single()
 
@@ -164,6 +164,10 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
         if (stats.isTracking) {
             await electron.ipcRenderer.invoke('stop-tracking')
             setStats(prev => ({ ...prev, isTracking: false, isPaused: false, elapsedSeconds: 0, keystrokes: 0, clicks: 0 }))
+            setSelectedProject('')
+            setSelectedMilestone('')
+            setSelectedTask('')
+            setWorkDescription('')
             fetchHistory()
         } else {
             if (!selectedTask) {
