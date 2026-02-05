@@ -26,7 +26,7 @@ export class ActivityTracker extends EventEmitter {
     } = {};
 
     private lastScreenshotTime: number = Date.now();
-    private screenshotIntervalMs: number = 5 * 60 * 1000; // 1 minute
+    private screenshotIntervalMs: number = 5 * 60 * 1000; // 5 minute
 
     constructor() {
         super();
