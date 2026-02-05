@@ -94,15 +94,7 @@ export class ScreenshotService {
         // ... existing code ...
         try {
             console.log('Uploading screenshot for user:', userId);
-
-            if (accessToken) {
-                console.log('ScreenshotService: key provided, updating session...');
-                const { error } = await supabase.auth.setSession({
-                    access_token: accessToken,
-                    refresh_token: ''
-                });
-                if (error) console.error('ScreenshotService: setSession Error:', error);
-            }
+            // Token is set in main via setClerkToken() before this call; do not use supabase.auth (client uses accessToken option).
 
             // Convert DataURL to Buffer
             const base64Data = dataUrl.replace(/^data:image\/png;base64,/, "");
@@ -110,10 +102,6 @@ export class ScreenshotService {
 
             const timestamp = Date.now();
             const filename = `${userId}/${timestamp}.png`;
-
-            // DEBUG: Check Auth Session
-            const { data: sessionData } = await supabase.auth.getSession();
-            // console.error('ScreenshotService: Current Auth User:', sessionData.session?.user?.id || 'NOT AUTHENTICATED');
 
             // 1. Upload to Storage
             const { data: uploadData, error: uploadError } = await supabase

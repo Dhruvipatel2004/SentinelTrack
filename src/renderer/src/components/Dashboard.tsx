@@ -9,39 +9,40 @@ const getEaosUserId = async (clerkUserId: string) => {
         .from('users')
         .select('id, full_name')
         .eq('clerk_user_id', clerkUserId)
-        .single()
+        .maybeSingle()
 
     if (error) {
         console.error('EAOS user mapping failed:', error)
         return null
     }
-
-    return data.id
+    return data?.id ?? null
 }
 
 export default function Dashboard({ user, onLogout }: { user: any, onLogout: () => void }) {
     const { getToken } = useAuth()
-    const [stats, setStats] = useState({ keystrokes: 0, clicks: 0, isIdle: false, isTracking: false, isPaused: false, elapsedSeconds: 0 })
-    const [history, setHistory] = useState<any[]>([])
-    const [showHistory, setShowHistory] = useState(false)
 
+    const [dbUserId, setDbUserId] = useState<string | null>(null) // UUID for UUID-based tables
+    const [loadingUser, setLoadingUser] = useState(true)
+    const [stats, setStats] = useState({
+        keystrokes: 0, clicks: 0, isIdle: false, isTracking: false, isPaused: false, elapsedSeconds: 0
+    })
+    const [history, setHistory] = useState<any[]>([])
     const [allTasks, setAllTasks] = useState<any[]>([])
     const [projects, setProjects] = useState<any[]>([])
     const [milestones, setMilestones] = useState<any[]>([])
     const [tasks, setTasks] = useState<any[]>([])
-
     const [selectedProject, setSelectedProject] = useState('')
     const [selectedMilestone, setSelectedMilestone] = useState('')
     const [selectedTask, setSelectedTask] = useState('')
     const [workDescription, setWorkDescription] = useState('')
-
     const [isManualEntry, setIsManualEntry] = useState(false)
     const [manualDate, setManualDate] = useState(new Date().toISOString().split('T')[0])
     const [manualStartTime, setManualStartTime] = useState('')
     const [manualEndTime, setManualEndTime] = useState('')
     const [isSavingManual, setIsSavingManual] = useState(false)
-    const [dbUserId, setDbUserId] = useState<string | null>(null)
+    const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
+    // Poll stats
     useEffect(() => {
         const interval = setInterval(async () => {
             const electron = (window as any).electron
@@ -53,71 +54,124 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
         return () => clearInterval(interval)
     }, [])
 
+    // Load EAOS User ID once (UUID)
+    useEffect(() => {
+        if (!user?.id) return
+        const loadUserId = async () => {
+            const cacheKey = `eaos_db_id_${user.id}`
+            const cachedId = localStorage.getItem(cacheKey)
+            if (cachedId) {
+                setDbUserId(cachedId)
+                setLoadingUser(false)
+                return
+            }
+            setLoadingUser(true)
+            const eaosId = await getEaosUserId(user.id)
+
+            if (eaosId) {
+                setDbUserId(eaosId)
+                localStorage.setItem(cacheKey, eaosId) // Cache it!
+            } else {
+                setErrorMessage('Failed to link account. Try signing out/in or contact support.')
+            }
+            setLoadingUser(false)
+        }
+        loadUserId()
+    }, [user, getToken])
+
+    // Fetch projects (SOWs) the user can access
+    const fetchProjects = useCallback(async () => {
+        if (!user?.id) return
+        try {
+            const { data, error } = await supabase.from('sows').select('id, title').order('title')
+            if (error) throw error
+            setProjects(data || [])
+        } catch (err: any) {
+            console.error('Projects fetch failed:', err)
+            setErrorMessage('Failed to load projects: ' + (err.message || 'Unknown error'))
+        }
+    }, [user?.id])
+
+    // Fetch tasks (use Clerk ID for assigned_to)
     const fetchData = useCallback(async () => {
-        console.log('Fetching tasks for user:', user.id)
+        if (!user?.id) return
 
-        const eaosUserId = await getEaosUserId(user.id)
-        if (!eaosUserId) {
-            console.warn('Could not map Clerk ID to EAOS User ID. Using Clerk ID as fallback.');
+        try {
+            console.log(`Fetching tasks for: ClerkID=${user.id}, DB_UUID=${dbUserId || 'pending'}`)
+
+            let query = supabase
+                .from('milestone_tasks')
+                .select(`
+          id,
+          title,
+          sow_milestone_id,
+          sow_milestones (
+            id,
+            title,
+            sows (
+              id,
+              title
+            )
+          )
+        `)
+                .eq('is_completed', false)
+                .order('created_at', { ascending: false })
+
+            // Query for either Clerk ID OR UUID (if available)
+            if (dbUserId) {
+                query = query.or(`assigned_to.eq.${user.id},assigned_to.eq.${dbUserId}`)
+            } else {
+                query = query.eq('assigned_to', user.id)
+            }
+
+            const { data, error } = await query
+
+            if (error) throw error
+
+            setAllTasks(data || [])
+
+        } catch (err: any) {
+            console.error('Tasks fetch failed:', err)
+            setErrorMessage('Failed to load tasks: ' + (err.message || 'Unknown error'))
         }
-        if (eaosUserId) setDbUserId(eaosUserId);
-
-        const fetchId = eaosUserId || user.id;
-
-        const { data, error } = await supabase
-            .from('milestone_tasks')
-            .select(`
-                    id, 
-                    title,
-                    sow_milestone_id,
-                    sow_milestones (
-                        id,
-                        title,
-                        sows (
-                            id,
-                            title
-                        )
-                    )
-                `)
-            .eq('assigned_to', fetchId)
-            .eq('is_completed', false)
-
-        if (error) {
-            console.error('Error fetching tasks details:', error)
-            return
-        }
-
-        console.log('Raw tasks data from Supabase:', data)
-
-        if (data) {
-            setAllTasks(data)
-
-            const uniqueProjects = Array.from(new Set(data.map(t => {
-                const project = (t.sow_milestones as any)?.sows
-                return project ? JSON.stringify(project) : null
-            }).filter(Boolean))).map(p => JSON.parse(p as string))
-
-            setProjects(uniqueProjects)
-            console.log('Projects loaded:', uniqueProjects.length)
-        }
-    }, [user.id])
+    }, [user?.id, dbUserId])
 
     const fetchHistory = useCallback(async () => {
         const electron = (window as any).electron
-        if (!electron?.ipcRenderer) return
-
+        if (!electron?.ipcRenderer || !user?.id) return
         try {
-            const data = await electron.ipcRenderer.invoke('get-history', user.id)
+            const token = await getToken({ template: 'supabase' }) || await getToken()
+            const data = await electron.ipcRenderer.invoke('get-history', user.id, token ?? undefined)
             setHistory(data || [])
         } catch (err) {
-            console.error('Failed to fetch history:', err)
+            console.error('History fetch failed:', err)
         }
-    }, [user.id])
+    }, [user?.id, getToken])
 
     useEffect(() => {
-        fetchData()
-        fetchHistory()
-    }, [fetchData, fetchHistory])
+        if (!loadingUser) {
+            fetchProjects()
+            fetchData()
+            fetchHistory()
+        }
+    }, [loadingUser, fetchProjects, fetchData, fetchHistory])
+
+    // Fetch milestones when user selects a project
+    const fetchMilestones = useCallback(async (sowId: string) => {
+        try {
+            const { data, error } = await supabase
+                .from('sow_milestones')
+                .select('id, title')
+                .eq('sow_id', sowId)
+                .order('title')
+            if (error) throw error
+            setMilestones(data || [])
+            setSelectedMilestone('')
+            setSelectedTask('')
+        } catch (err: any) {
+            console.error('Milestones fetch failed:', err)
+        }
+    }, [])
 
     useEffect(() => {
         if (!selectedProject) {
@@ -127,18 +181,31 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
             setSelectedTask('')
             return
         }
-        const filteredMilestones = Array.from(new Set(allTasks
-            .filter(t => (t.sow_milestones as any)?.sows?.id === selectedProject)
-            .map(t => JSON.stringify({
-                id: (t.sow_milestones as any)?.id,
-                title: (t.sow_milestones as any)?.title
-            }))
-        )).map(m => JSON.parse(m))
+        fetchMilestones(selectedProject)
+    }, [selectedProject, fetchMilestones])
 
-        setMilestones(filteredMilestones)
-        setSelectedMilestone('')
-        setSelectedTask('')
-    }, [selectedProject, allTasks])
+    // Fetch tasks when user selects a milestone
+    const fetchTasksForMilestone = useCallback(async (milestoneId: string) => {
+        if (!user?.id) return
+        try {
+            let query = supabase
+                .from('milestone_tasks')
+                .select('id, title')
+                .eq('sow_milestone_id', milestoneId)
+                .eq('is_completed', false)
+            if (dbUserId) {
+                query = query.or(`assigned_to.eq.${user.id},assigned_to.eq.${dbUserId}`)
+            } else {
+                query = query.eq('assigned_to', user.id)
+            }
+            const { data, error } = await query
+            if (error) throw error
+            setTasks(data || [])
+            setSelectedTask('')
+        } catch (err: any) {
+            console.error('Tasks for milestone fetch failed:', err)
+        }
+    }, [user?.id, dbUserId])
 
     useEffect(() => {
         if (!selectedMilestone) {
@@ -146,24 +213,17 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
             setSelectedTask('')
             return
         }
-        const filteredTasks = allTasks
-            .filter(t => t.sow_milestone_id === selectedMilestone)
-            .map(t => ({
-                id: t.id,
-                title: t.title
-            }))
+        fetchTasksForMilestone(selectedMilestone)
+    }, [selectedMilestone, fetchTasksForMilestone])
 
-        setTasks(filteredTasks)
-        setSelectedTask('')
-    }, [selectedMilestone, allTasks])
-
+    // Tracking controls (unchanged, but use dbUserId if needed for UUID fields)
     const toggleTracking = async () => {
         const electron = (window as any).electron
         if (!electron?.ipcRenderer) return
 
         if (stats.isTracking) {
             await electron.ipcRenderer.invoke('stop-tracking')
-            setStats(prev => ({ ...prev, isTracking: false, isPaused: false, elapsedSeconds: 0, keystrokes: 0, clicks: 0 }))
+            setStats(s => ({ ...s, isTracking: false, isPaused: false, elapsedSeconds: 0, keystrokes: 0, clicks: 0 }))
             setSelectedProject('')
             setSelectedMilestone('')
             setSelectedTask('')
@@ -171,7 +231,7 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
             fetchHistory()
         } else {
             if (!selectedTask) {
-                alert('Please select a task before starting.')
+                alert('Select a task first.')
                 return
             }
             await electron.ipcRenderer.invoke('start-tracking', {
@@ -180,7 +240,7 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
                 taskId: selectedTask,
                 workDescription
             })
-            setStats(prev => ({ ...prev, isTracking: true, isPaused: false, elapsedSeconds: 0, keystrokes: 0, clicks: 0 }))
+            setStats(s => ({ ...s, isTracking: true, isPaused: false, elapsedSeconds: 0, keystrokes: 0, clicks: 0 }))
         }
     }
 
@@ -188,55 +248,46 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
         const electron = (window as any).electron
         if (!electron?.ipcRenderer) return
 
-        const newPausedState = !stats.isPaused
-        if (stats.isPaused) {
-            await electron.ipcRenderer.invoke('resume-tracking')
-        } else {
-            await electron.ipcRenderer.invoke('pause-tracking')
-        }
-        setStats(prev => ({ ...prev, isPaused: newPausedState }))
+        const shouldPause = !stats.isPaused
+        await electron.ipcRenderer.invoke(shouldPause ? 'pause-tracking' : 'resume-tracking')
+        setStats(s => ({ ...s, isPaused: shouldPause }))
     }
 
     const resetTimer = async () => {
         const electron = (window as any).electron
         if (!electron?.ipcRenderer) return
-
         await electron.ipcRenderer.invoke('reset-tracking')
-        setStats(prev => ({ ...prev, elapsedSeconds: 0, keystrokes: 0, clicks: 0 }))
+        setStats(s => ({ ...s, elapsedSeconds: 0, keystrokes: 0, clicks: 0 }))
     }
 
     const saveManualEntry = async () => {
-        if (!manualDate || !manualStartTime || !manualEndTime) {
-            alert('Please fill in date and both times.')
+        if (!manualDate || !manualStartTime || !manualEndTime || !selectedTask) {
+            alert('Complete all fields.')
             return
         }
 
-        const startFullStr = `${manualDate}T${manualStartTime}`
-        const endFullStr = `${manualDate}T${manualEndTime}`
-        const start = new Date(startFullStr).getTime()
-        const end = new Date(endFullStr).getTime()
+        const start = new Date(`${manualDate}T${manualStartTime}`).getTime()
+        const end = new Date(`${manualDate}T${manualEndTime}`).getTime()
         const diff = end - start
 
         if (isNaN(diff) || diff <= 0) {
-            alert('Please enter valid start and end times. End time must be after start time.')
+            alert('Invalid times.')
             return
         }
-
-        const durationSeconds = Math.floor(diff / 1000)
 
         setIsSavingManual(true)
         try {
             const electron = (window as any).electron
-            if (!electron?.ipcRenderer) return
+            if (!electron?.ipcRenderer) throw new Error('Electron unavailable')
 
             const success = await electron.ipcRenderer.invoke('save-manual-log', {
-                userId: user.id,
+                userId: user.id,  // Clerk ID (adjust if table uses UUID)
                 projectId: selectedProject,
                 milestoneId: selectedMilestone,
                 taskId: selectedTask,
                 workDescription,
-                durationSeconds,
-                timestamp: new Date(startFullStr).toISOString()
+                durationSeconds: Math.floor(diff / 1000),
+                timestamp: new Date(start).toISOString()
             })
 
             if (success) {
@@ -246,29 +297,30 @@ export default function Dashboard({ user, onLogout }: { user: any, onLogout: () 
                 setSelectedMilestone('')
                 setSelectedTask('')
                 setWorkDescription('')
-
                 fetchHistory()
                 fetchData()
-                alert('Manual entry saved successfully!')
+                alert('Saved.')
             } else {
-                alert('Failed to save manual entry.')
+                alert('Save failed.')
             }
         } catch (err) {
-            console.error('Save manual entry error:', err)
-            alert('An error occurred while saving.')
+            console.error('Manual save error:', err)
+            alert('Error saving.')
         } finally {
             setIsSavingManual(false)
         }
     }
 
-
     const formatTime = (seconds: number) => {
-        const hrs = Math.floor(seconds / 3600)
-        const mins = Math.floor((seconds % 3600) / 60)
-        const secs = seconds % 60
-        return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+        const h = Math.floor(seconds / 3600).toString().padStart(2, '0')
+        const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0')
+        const s = (seconds % 60).toString().padStart(2, '0')
+        return `${h}:${m}:${s}`
     }
 
+    if (loadingUser) {
+        return <div className="flex h-screen items-center justify-center bg-slate-900 text-white">Loading account...</div>
+    }
     return (
         <div className="flex flex-col h-screen bg-slate-900 text-white p-6 overflow-hidden relative">
             <div className="flex justify-between items-center mb-6 shrink-0">

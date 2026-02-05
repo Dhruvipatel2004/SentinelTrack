@@ -1,4 +1,5 @@
-import { supabase } from './supabase'
+import { supabase, supabaseUrl, supabaseKey } from './supabase'
+import { createClient } from '@supabase/supabase-js'
 import { initStore, ActivityLog } from './store'
 import { app } from 'electron'
 import { randomUUID } from 'crypto'
@@ -6,12 +7,15 @@ import { randomUUID } from 'crypto'
 export class SyncService {
     private isSyncing: boolean = false;
     private syncInterval: NodeJS.Timeout | null = null;
+    private currentAccessToken: string | null = null;
 
     constructor() {
+        console.log('[SyncService] Initializing SyncService...');
         this.startSyncLoop();
     }
 
     private startSyncLoop() {
+        console.log('[SyncService] Starting sync loop (30s interval)...');
         // Try to sync every 30 seconds
         this.syncInterval = setInterval(() => {
             this.syncPendingLogs();
@@ -196,14 +200,80 @@ export class SyncService {
     }
 
     public async setSession(accessToken: string) {
-        await supabase.auth.setSession({
-            access_token: accessToken,
-            refresh_token: '' // Not strictly needed for the insert if access token is fresh
-        });
-        console.log('Main process Supabase session updated');
+        try {
+            console.log('[SyncService] Updating Supabase session...');
+            this.currentAccessToken = accessToken;
+            const { data, error } = await supabase.auth.setSession({
+                access_token: accessToken,
+                refresh_token: ''
+            });
+            if (error) throw error;
+            console.log('[SyncService] Supabase session updated successfully. User:', data.session?.user?.id);
+        } catch (error) {
+            console.error('[SyncService] Failed to set Supabase session:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Registers a user in the EAOS database (public.users table).
+     * This uses the main process's supabase client (privileged).
+     */
+    public async registerUser(userData: { id: string; email: string; fullName: string }, token?: string | null) {
+        try {
+            console.log(`[SyncService] Registering/Updating user: ${userData.email} (${userData.id})`);
+            if (token) this.currentAccessToken = token;
+            // Token is set in main via setClerkToken(); do not use auth.setSession (rejects Clerk JWT).
+            console.log(`[SyncService] Target Clerk ID: ${userData.id}`);
+
+            // Check if user exists or upsert them
+            // In public.users table (EAOS), clerk_user_id is the unique link
+            console.log('[SyncService] Attempting upsert with clerk_user_id:', userData.id);
+            const { data, error } = await supabase
+                .from('users')
+                .upsert({
+                    clerk_user_id: userData.id,
+                    email: userData.email,
+                    full_name: userData.fullName
+                }, {
+                    onConflict: 'clerk_user_id'
+                })
+                .select('id')
+                .single();
+
+            if (error) {
+                console.error('[SyncService] Error upserting user:', error.message);
+                throw error;
+            }
+
+            if (data?.id) {
+                console.log(`[SyncService] User registered/resolved. DB UUID: ${data.id}`);
+                return data.id;
+            }
+
+            // Fallback: try to fetch manually if single() failed to return data
+            const { data: fetchRes, error: fetchErr } = await supabase
+                .from('users')
+                .select('id')
+                .eq('clerk_user_id', userData.id)
+                .single();
+
+            if (fetchErr || !fetchRes) {
+                console.error('[SyncService] Failed to retrieve user ID after upsert:', fetchErr?.message);
+                return null;
+            }
+
+            console.log(`[SyncService] User resolved via fallback fetch. DB UUID: ${fetchRes.id}`);
+            return fetchRes.id;
+
+        } catch (error) {
+            console.error('[SyncService] registerUser failed:', error);
+            return null;
+        }
     }
 
     public stop() {
+        console.log('[SyncService] Stopping sync loop...');
         if (this.syncInterval) clearInterval(this.syncInterval);
     }
 }

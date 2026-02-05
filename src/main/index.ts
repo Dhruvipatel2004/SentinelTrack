@@ -5,6 +5,7 @@ import icon from '../../resources/icon.png?asset'
 import { activityTracker } from './activity-tracker'
 import { initTray } from './tray'
 import { syncService } from './sync-service'
+import { setClerkToken } from './supabase'
 import { screenshotService } from './screenshot-service'
 import { writeFileSync } from 'fs'
 import { join as joinPath } from 'path'
@@ -38,6 +39,7 @@ let mainWindow: BrowserWindow | null = null;
 let screenshotPopup: BrowserWindow | null = null;
 let currentUserId: string | null = null;
 let currentAccessToken: string | null = null;
+let pendingFreshTokenResolve: ((token: string | null) => void) | null = null;
 
 function createScreenshotPopup(data: any): void {
     if (screenshotPopup && !screenshotPopup.isDestroyed()) {
@@ -321,8 +323,9 @@ app.whenReady().then(() => {
         return activityTracker.getStats();
     });
 
-    ipcMain.handle('get-history', async (_, userId: string) => {
+    ipcMain.handle('get-history', async (_, userId: string, token?: string | null) => {
         console.log('IPC: get-history for', userId);
+        if (token) setClerkToken(token);
         return await syncService.getHistory(userId);
     });
 
@@ -333,13 +336,30 @@ app.whenReady().then(() => {
 
     ipcMain.handle('set-user-id', (_, userId: string) => {
         try {
-            console.log('IPC: set-user-id', userId);
+            console.log(`[IPC] set-user-id: ${userId}`);
             currentUserId = userId;
             activityTracker.setUserId(userId);
             return true;
         } catch (error) {
-            console.error('IPC: set-user-id error:', error);
+            console.error('[IPC] set-user-id error:', error);
             throw error;
+        }
+    });
+
+    ipcMain.handle('register-user', async (_, userData) => {
+        try {
+            console.log(`[IPC] register-user request for: ${userData.email}`);
+            const dbUuid = await syncService.registerUser(userData, currentAccessToken);
+            if (dbUuid) {
+                console.log(`[IPC] register-user success: ${dbUuid}`);
+                return dbUuid;
+            } else {
+                console.warn('[IPC] register-user failed to return UUID');
+                return null;
+            }
+        } catch (error) {
+            console.error('[IPC] register-user error:', error);
+            return null;
         }
     });
 
@@ -347,25 +367,49 @@ app.whenReady().then(() => {
         try {
             console.log('IPC: set-supabase-session');
             currentAccessToken = accessToken;
-            await syncService.setSession(accessToken);
+            setClerkToken(accessToken);
             return true;
         } catch (error) {
             console.error('IPC: set-supabase-session error:', error);
-            return false; // Return false instead of throwing to prevent channel closure
+            return false;
+        }
+    });
+
+    ipcMain.handle('fresh-token-response', (_, token: string | null) => {
+        if (pendingFreshTokenResolve) {
+            pendingFreshTokenResolve(token);
+            pendingFreshTokenResolve = null;
         }
     });
 
     ipcMain.handle('save-screenshot', async (_, { userId, dataUrl, description, metadata, token }) => {
         console.log('IPC: save-screenshot for', userId);
+        const fallbackToken = token ?? metadata?.token ?? currentAccessToken;
+        let authToken: string | null = fallbackToken;
+
+        const tokenPromise = new Promise<string | null>((resolve) => {
+            pendingFreshTokenResolve = resolve;
+        });
+        const timeout = (ms: number) => new Promise<null>((r) => setTimeout(() => r(null), ms));
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('request-fresh-token');
+            const freshToken = await Promise.race([tokenPromise, timeout(10000)]);
+            pendingFreshTokenResolve = null;
+            if (freshToken) authToken = freshToken;
+        } else {
+            pendingFreshTokenResolve = null;
+        }
+
+        if (authToken) setClerkToken(authToken);
         const success = await screenshotService.uploadScreenshot(
             userId,
             dataUrl,
             description,
-            metadata.projectId,
-            metadata.milestoneId,
-            metadata.taskId,
-            token,
-            metadata.sessionId
+            metadata?.projectId,
+            metadata?.milestoneId,
+            metadata?.taskId,
+            authToken ?? undefined,
+            metadata?.sessionId
         );
 
         if (success && screenshotPopup && !screenshotPopup.isDestroyed()) {
